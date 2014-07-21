@@ -230,6 +230,90 @@ set new cflags for ac-clang from shell command output"
 (defvar ac-clang-template-start-point nil)
 (defvar ac-clang-template-candidates (list "ok" "no" "yes:)"))
 
+(defvar ac-clang-ignore-c++-template-optional-args t
+  "If value is non-nil, optional args of C++ template will be ignored.")
+
+(defsubst ac-clang-candidate-is-c++-template-p (s)
+  "If `<' appears faster than `(', it would be template."
+  ;; exclude `operator<'
+  (if  (string-match (rx (or "(" "<" "operator")) s)
+	  (string= (match-string 0 s) "<")
+	nil)
+  )
+
+(defsubst ac-clang-expand-c++-template (s)
+  "Format and expand c++ template."
+  (string-match (rx bol (submatch (*? nonl))
+					"<" (submatch  (not (any "#")) (* nonl) (not (any "#"))) ">")
+				s)
+  (let ((template-name (match-string 1 s))
+		(template-args (match-string 2 s))
+		template-fn-args)
+
+	;;process template optional args
+	(if ac-clang-ignore-c++-template-optional-args
+		(setq template-args (replace-regexp-in-string "\{#.*#\}" "" template-args))
+	  (progn
+		(setq template-args (replace-regexp-in-string "\{#" "" template-args))
+		(setq template-args (replace-regexp-in-string "#\}" "" template-args))
+		))
+	
+	;;format template-args to yas style
+	(setq template-args
+		  (mapconcat
+		   (lambda (arg)
+			 (setq arg (replace-regexp-in-string "<#" "${" arg))
+			 (setq arg (replace-regexp-in-string "#>" "}" arg))
+			 )
+		   (split-string template-args ", ")
+		   ", "))
+	
+	;; when template function
+	(when (string-match (rx bol (submatch (*? nonl))
+							"<" (submatch  (not (any "#")) (* nonl) (not (any "#"))) ">"
+							"(" (submatch (* nonl)) ")") s)
+	  (setq template-fn-args (match-string 3 s))
+
+	  
+	  ;; remove optional args
+	  (setq template-fn-args (replace-regexp-in-string "\{#.*#\}" "" template-fn-args))
+
+	  ;; format template-fn-args to yas style
+	  (setq template-fn-args
+			(mapconcat
+			 (lambda (arg)
+			   (setq arg (replace-regexp-in-string (rx "<#") "${" arg))
+			   (setq arg (replace-regexp-in-string (rx "#>") "}" arg))
+			   )
+			 (split-string template-fn-args ", ")
+			 ", ")))
+
+	;; ;;debug
+	;; (message "name%s" template-name)
+	;; (message "args%s" template-args)
+	;; (message "fn: %s" template-fn-args)
+	
+	(let ((snp
+		   (if template-fn-args
+			   (concat "<" template-args ">" "(" template-fn-args ")")
+			 (concat "<" template-args ">"))))
+	  
+	  (setq snp (replace-regexp-in-string ", \\.\\.\\." "}, ${..." snp))
+	  (cond
+	   ((featurep 'yasnippet)
+		(yas-expand-snippet snp))
+
+	   ((featurep 'snippet)
+		(replace-regexp-in-string "$" "$$" snp)
+		(snippet-insert snp)
+		)
+	   (t
+		(message "Dude! You are too out! Please install a yasnippet or a snippet script:)")
+		)))
+	;;	(return)
+	))
+
+
 (defun ac-clang-action ()
   (interactive)
   ;; (ac-last-quick-help)
@@ -246,6 +330,13 @@ set new cflags for ac-clang from shell command output"
                    args (match-string 2 s))
              (push (propertize (ac-clang-clean-document args) 'ac-clang-help ret-t
                                'raw-args args) candidates))
+                               
+                               			
+      			;;c++ template
+			      ((ac-clang-candidate-is-c++-template-p s)
+			      (ac-clang-expand-c++-template s)
+			      )
+
             ((string-match "^\\([^(]*\\)\\((.*)\\)" s)
              (setq fn (match-string 1 s)
                    args (match-string 2 s))
